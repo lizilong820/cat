@@ -3,18 +3,19 @@
   "packOptions": {
     "ignore": [
       {
-        "type": "folder",
-        "value": "node_modules"
+        "value": "node_modules",
+        "type": "folder"
       },
       {
-        "type": "folder",
-        "value": "public"
+        "value": "public",
+        "type": "folder"
       }
-    ]
+    ],
+    "include": []
   },
   "compileType": "game",
   "libVersion": "2.32.3",
-  "appid": "touristappid",
+  "appid": "wxb3cf9aa8c4405017",
   "projectname": "cat-mouse-battleroyale",
   "setting": {
     "es6": true,
@@ -25,8 +26,27 @@
     "compileHotReLoad": true,
     "minifyJS": false,
     "minifyWXML": false,
-    "minifyWXSS": false
+    "minifyWXSS": false,
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "uploadWithSourceMap": true,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "condition": false,
+    "swc": false,
+    "disableSWC": true,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
   },
   "simulatorType": "wechat",
-  "condition": {}
+  "condition": {},
+  "simulatorPluginLibVersion": {},
+  "isGameTourist": false,
+  "editorSetting": {}
 }
