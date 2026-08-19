@@ -1,4 +1,5 @@
 const canvas = document.querySelector('#gameCanvas');
+const API_BASE = window.CAT_MOUSE_API_URL || 'http://152.136.139.226:9001';
 const ctx = canvas.getContext('2d');
 const stage = document.querySelector('.stage-frame');
 const roleButtons = [...document.querySelectorAll('.role-button')];
@@ -387,6 +388,6 @@ resetGame();
 resizeCanvas();
 requestAnimationFrame(loop);
 
-fetch('/api/health').then((response) => response.json()).then((data) => {
+fetch(`${API_BASE}/api/health`).then((response) => response.json()).then((data) => {
   document.querySelector('#serverStatus').textContent = data.ok ? '在线' : '异常';
 }).catch(() => { document.querySelector('#serverStatus').textContent = '离线'; });
