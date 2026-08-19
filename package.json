@@ -1,0 +1,15 @@
+{
+  "name": "cat-mouse-battleroyale",
+  "version": "0.1.0",
+  "private": true,
+  "description": "猫鼠大战微信小游戏雏形：可玩的 Canvas 对局和轻量 Node 服务端。",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/app.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
