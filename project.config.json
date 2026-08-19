@@ -1,0 +1,32 @@
+{
+  "description": "猫鼠大战微信小游戏原生雏形",
+  "packOptions": {
+    "ignore": [
+      {
+        "type": "folder",
+        "value": "node_modules"
+      },
+      {
+        "type": "folder",
+        "value": "public"
+      }
+    ]
+  },
+  "compileType": "game",
+  "libVersion": "2.32.3",
+  "appid": "touristappid",
+  "projectname": "cat-mouse-battleroyale",
+  "setting": {
+    "es6": true,
+    "minified": false,
+    "urlCheck": false,
+    "postcss": true,
+    "enhance": true,
+    "compileHotReLoad": true,
+    "minifyJS": false,
+    "minifyWXML": false,
+    "minifyWXSS": false
+  },
+  "simulatorType": "wechat",
+  "condition": {}
+}
