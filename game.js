@@ -17,6 +17,34 @@ const colors = {
 };
 const WORLD = { width: 2000, height: 2000, zoom: 1.15 };
 
+// 资源包按 manifest 的 ID 映射到微信小游戏本地路径；同一 ID 的变体使用语义化 key。
+const assetPaths = {
+  map: 'assets/C/C01.png', house: 'assets/C/C05.png', eventZone: 'assets/C/C06.png',
+  mouse: 'assets/B/B01.png', cat: 'assets/B/B05.png',
+  mouseWin: 'assets/B/B14__victory_cheering_pose.png', mouseLose: 'assets/B/B14__defeat_sad_pose.png',
+  catWin: 'assets/B/B19__victory_celebrating_pose.png', catLose: 'assets/B/B19__defeat_frustrated_pose.png',
+  door1: 'assets/D/D01.png', door2: 'assets/D/D02.png', door3: 'assets/D/D03.png', door4: 'assets/D/D04.png',
+  doorDamage1: 'assets/D/D05__stage_1_minor_cracks.png', doorDamage2: 'assets/D/D05__stage_2_more_cracks_and_splinters.png',
+  doorDamage3: 'assets/D/D05__stage_3_heavy_damage_with_large_crack.png', doorDamage4: 'assets/D/D05__stage_4_near_collapse_broken_planks.png',
+  turret: 'assets/D/D07.png', trap: 'assets/D/D10.png', shock: 'assets/D/D11.png', heal: 'assets/D/D12.png',
+  coin: 'assets/A/A05.png', event0: 'assets/F/F01.png', event1: 'assets/F/F02.png', event2: 'assets/F/F03.png', event3: 'assets/F/F04.png', event4: 'assets/F/F05.png'
+};
+const assets = {};
+function loadAssets() {
+  Object.entries(assetPaths).forEach(([key, path]) => {
+    const image = wx.createImage();
+    image.onload = () => { assets[key] = image; };
+    image.onerror = () => { assets[key] = null; };
+    image.src = path;
+  });
+}
+function drawAsset(key, x, y, width, height, alpha = 1) {
+  const image = assets[key];
+  if (!image) return false;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.drawImage(image, x, y, width, height); ctx.restore();
+  return true;
+}
+
 const events = [
   { name: '暴风雪', description: '猫移速下降 30%，持续 15 秒', color: '#8ccaff', duration: 15 },
   { name: '狂怒', description: '猫攻击提升 50%，持续 10 秒', color: '#ff8d64', duration: 10 },
@@ -51,7 +79,7 @@ const catUpgrades = [
 
 const state = {
   role: 'mouse', phase: 'lobby', phaseTime: 10, timeLeft: 480, eventCooldown: 60, activeEvent: null, eventLeft: 0,
-  gold: 320, miceAlive: 10, catsAlive: 2, catHp: 1000, catMaxHp: 1000,
+  gold: 320, score: 0, miceAlive: 10, catsAlive: 2, catHp: 1000, catMaxHp: 1000,
   selectedHouse: 0, houses: [], turrets: 0, devices: [], upgrades: {}, feed: [], destroyedGates: 0,
   move: { x: 0, y: 0 }, joystick: false, lastTime: Date.now(), lastAttack: 0,
   serverOnline: false, roomId: '', syncElapsed: 0, cardCooldown: 0, buffs: {}, touchFx: { x: -100, y: -100, life: 0 }, pressed: '', result: '',
@@ -60,7 +88,7 @@ const state = {
 
 function resetGame() {
   state.phase = 'lobby'; state.phaseTime = 10; state.timeLeft = 480; state.eventCooldown = 60; state.activeEvent = null; state.eventLeft = 0;
-  state.gold = 320; state.miceAlive = 10; state.catsAlive = 2; state.catHp = 1000; state.destroyedGates = 0;
+  state.gold = 320; state.score = 0; state.miceAlive = 10; state.catsAlive = 2; state.catHp = 1000; state.destroyedGates = 0;
   state.selectedHouse = 0; state.turrets = 0; state.devices = []; state.upgrades = {}; state.destroyedGates = 0;
   state.feed = []; state.syncElapsed = 0; state.cardCooldown = 0; state.buffs = {}; state.touchFx.life = 0; state.pressed = '';
   state.player = { x: 1000, y: 1000, targetX: 1000, targetY: 1000, path: [] }; state.camera = { x: 1000, y: 1000 };
@@ -68,7 +96,7 @@ function resetGame() {
   state.aiCats = [{ id: 1, hp: 1000, x: 1050, y: 1000, target: 0 }];
   state.resourcePoints = Array.from({ length: 12 }, (_, index) => ({ x: 180 + ((index * 317) % 1640), y: 180 + ((index * 541) % 1640), active: true }));
   state.houses = Array.from({ length: 10 }, (_, index) => { const angle = -Math.PI / 2 + index / 10 * Math.PI * 2; return {
-    index, hp: 500, maxHp: 500, level: 1, destroyed: false, underAttack: false,
+    index, hp: 500, maxHp: 500, armor: 0, level: 1, destroyed: false, underAttack: false,
     x: 1000 + Math.cos(angle) * 650, y: 1000 + Math.sin(angle) * 520, turrets: 0, devices: []
   }; });
   addFeed('新对局开始：选择阵营，守住或击破房门。');
@@ -171,12 +199,18 @@ function drawMap() {
   const toScreen = (wx, wy) => ({ x: WIDTH / 2 + (wx - state.camera.x) * scale, y: top + mapHeight / 2 + (wy - state.camera.y) * scale });
   ctx.save(); ctx.beginPath(); ctx.rect(14, top, WIDTH - 28, mapHeight); ctx.clip();
   ctx.fillStyle = '#183a36'; ctx.fillRect(14, top, WIDTH - 28, mapHeight);
-  ctx.strokeStyle = '#9b7953'; ctx.lineWidth = 72 * scale; ctx.lineCap = 'round';
-  [[1000,0,1000,2000],[0,1000,2000,1000],[350,350,1650,1650],[1650,350,350,1650]].forEach((road) => { const a = toScreen(road[0], road[1]); const b = toScreen(road[2], road[3]); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); });
-  ctx.strokeStyle = 'rgba(238,204,135,.35)'; ctx.lineWidth = 2; ctx.setLineDash([10, 12]); [[1000,0,1000,2000],[0,1000,2000,1000]].forEach((road) => { const a = toScreen(road[0], road[1]); const b = toScreen(road[2], road[3]); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }); ctx.setLineDash([]);
-  for (let i = 0; i < 32; i += 1) { const p = toScreen(100 + ((i * 317) % 1800), 100 + ((i * 541) % 1800)); ctx.fillStyle = '#2c6651'; ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(5, 18 * scale), 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#437a59'; ctx.beginPath(); ctx.arc(p.x - 5 * scale, p.y - 7 * scale, Math.max(3, 12 * scale), 0, Math.PI * 2); ctx.fill(); }
+  const mapLeft = WIDTH / 2 - state.camera.x * scale; const mapTop = top + mapHeight / 2 - state.camera.y * scale;
+  const hasMapArt = drawAsset('map', mapLeft, mapTop, WORLD.width * scale, WORLD.height * scale);
+  if (!hasMapArt) {
+    ctx.strokeStyle = '#9b7953'; ctx.lineWidth = 72 * scale; ctx.lineCap = 'round';
+    [[1000,0,1000,2000],[0,1000,2000,1000],[350,350,1650,1650],[1650,350,350,1650]].forEach((road) => { const a = toScreen(road[0], road[1]); const b = toScreen(road[2], road[3]); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); });
+    ctx.strokeStyle = 'rgba(238,204,135,.35)'; ctx.lineWidth = 2; ctx.setLineDash([10, 12]); [[1000,0,1000,2000],[0,1000,2000,1000]].forEach((road) => { const a = toScreen(road[0], road[1]); const b = toScreen(road[2], road[3]); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }); ctx.setLineDash([]);
+    for (let i = 0; i < 32; i += 1) { const p = toScreen(100 + ((i * 317) % 1800), 100 + ((i * 541) % 1800)); ctx.fillStyle = '#2c6651'; ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(5, 18 * scale), 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#437a59'; ctx.beginPath(); ctx.arc(p.x - 5 * scale, p.y - 7 * scale, Math.max(3, 12 * scale), 0, Math.PI * 2); ctx.fill(); }
+  }
   if (state.resourcePoints) state.resourcePoints.forEach((point) => { if (!point.active) return; const p = toScreen(point.x, point.y); ctx.fillStyle = colors.orange; ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(3, 7 * scale), 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#ffe09d'; ctx.fillRect(p.x - 2, p.y - 2, 4, 4); });
-  const center = toScreen(1000, 1000); const centerRadius = Math.max(30, 90 * scale); ctx.fillStyle = 'rgba(100,222,210,.13)'; ctx.beginPath(); ctx.arc(center.x, center.y, centerRadius, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = colors.cyan; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(center.x, center.y, centerRadius, 0, Math.PI * 2); ctx.stroke(); text('中心事件区', center.x, center.y + 4, 11, colors.text, 'center', '700');
+  const center = toScreen(1000, 1000); const centerRadius = Math.max(30, 90 * scale); ctx.fillStyle = 'rgba(100,222,210,.13)'; ctx.beginPath(); ctx.arc(center.x, center.y, centerRadius, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = colors.cyan; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(center.x, center.y, centerRadius, 0, Math.PI * 2); ctx.stroke();
+  if (state.activeEvent) drawAsset(`event${events.indexOf(state.activeEvent)}`, center.x - centerRadius * .65, center.y - centerRadius * .65, centerRadius * 1.3, centerRadius * 1.3, .9);
+  text('中心事件区', center.x, center.y + 4, 11, colors.text, 'center', '700');
   state.houses.forEach((house) => { const p = toScreen(house.x, house.y); house.screenX = p.x; house.screenY = p.y; drawHouse(house, p.x, p.y, house.index === state.selectedHouse, scale); });
   if (state.aiMice) state.aiMice.forEach((ai, index) => { const house = state.houses[(index + 1) % state.houses.length]; const p = toScreen(house.x + 42, house.y + 34); drawCharacter(p.x, p.y, 'mouse', false, scale * .75); });
   if (state.aiCats) state.aiCats.forEach((cat) => { const p = toScreen(cat.x, cat.y); drawCharacter(p.x, p.y, 'cat', false, scale * .85); });
@@ -197,16 +231,22 @@ function drawMinimap() {
 function drawHouse(house, x, y, selected, scale = 1) {
   const size = Math.max(18, WIDTH * .075 * scale);
   if (selected) { ctx.fillStyle = state.role === 'mouse' ? 'rgba(100,222,210,.2)' : 'rgba(255,180,91,.2)'; ctx.beginPath(); ctx.arc(x, y, size * 1.03, 0, Math.PI * 2); ctx.fill(); }
-  const body = house.destroyed ? '#39484a' : house.underAttack ? '#704335' : '#24484b';
-  roundedRect(x - size * .57, y - size * .45, size * 1.14, size * .9, 6, body, selected ? (state.role === 'mouse' ? colors.cyan : colors.orange) : 'rgba(210,229,215,.35)');
-  ctx.fillStyle = house.destroyed ? '#596362' : house.level >= 3 ? '#9c6a3b' : '#7a5a3c'; ctx.beginPath(); ctx.moveTo(x - size * .72, y - size * .35); ctx.lineTo(x, y - size * .78); ctx.lineTo(x + size * .72, y - size * .35); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#163238'; ctx.fillRect(x - size * .12, y + size * .04, size * .24, size * .35);
-  ctx.fillStyle = house.destroyed ? '#899694' : '#ffe09d'; ctx.fillRect(x - size * .4, y - size * .05, size * .2, size * .16); ctx.fillRect(x + size * .2, y - size * .05, size * .2, size * .16);
+  const artSize = size * 2.35;
+  const hasHouseArt = !house.destroyed && drawAsset('house', x - artSize * .5, y - artSize * .72, artSize, artSize, .96);
+  if (!hasHouseArt) {
+    const body = house.destroyed ? '#39484a' : house.underAttack ? '#704335' : '#24484b';
+    roundedRect(x - size * .57, y - size * .45, size * 1.14, size * .9, 6, body, selected ? (state.role === 'mouse' ? colors.cyan : colors.orange) : 'rgba(210,229,215,.35)');
+    ctx.fillStyle = house.destroyed ? '#596362' : house.level >= 3 ? '#9c6a3b' : '#7a5a3c'; ctx.beginPath(); ctx.moveTo(x - size * .72, y - size * .35); ctx.lineTo(x, y - size * .78); ctx.lineTo(x + size * .72, y - size * .35); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#163238'; ctx.fillRect(x - size * .12, y + size * .04, size * .24, size * .35);
+    ctx.fillStyle = house.destroyed ? '#899694' : '#ffe09d'; ctx.fillRect(x - size * .4, y - size * .05, size * .2, size * .16); ctx.fillRect(x + size * .2, y - size * .05, size * .2, size * .16);
+  }
   // 房屋内部四个功能区的缩略表达：大门、前院炮台槽、内庭设备槽、资源室。
   ctx.fillStyle = house.destroyed ? '#687474' : '#a8d6cc'; ctx.fillRect(x - size * .12, y + size * .04, size * .24, size * .35);
   ctx.fillStyle = '#6fd7c9'; ctx.beginPath(); ctx.arc(x - size * .42, y + size * .45, Math.max(2, size * .07), 0, Math.PI * 2); ctx.arc(x + size * .42, y + size * .45, Math.max(2, size * .07), 0, Math.PI * 2); ctx.fill();
-  if (house.turrets > 0) { ctx.fillStyle = colors.orange; ctx.fillRect(x - size * .48, y + size * .22, size * .16, size * .08); }
-  if (house.devices?.length) { ctx.fillStyle = colors.blue; ctx.fillRect(x + size * .32, y + size * .2, size * .12, size * .08); }
+  const doorKey = house.destroyed ? 'doorDamage4' : house.hp / house.maxHp < .25 ? 'doorDamage4' : house.hp / house.maxHp < .5 ? 'doorDamage3' : house.hp / house.maxHp < .75 ? 'doorDamage2' : house.hp / house.maxHp < .95 ? 'doorDamage1' : `door${Math.min(4, house.level)}`;
+  drawAsset(doorKey, x - size * .48, y + size * .03, size * .96, size * .8, .92);
+  if (house.turrets > 0) drawAsset('turret', x - size * .6, y + size * .1, size * .42, size * .42, .95);
+  if (house.devices?.length) { const deviceKey = house.devices.includes('shock') ? 'shock' : house.devices.includes('trap') ? 'trap' : 'heal'; drawAsset(deviceKey, x + size * .28, y + size * .12, size * .38, size * .38, .95); }
   ctx.fillStyle = colors.orange; ctx.beginPath(); ctx.arc(x + size * .42, y - size * .28, Math.max(2, size * .06), 0, Math.PI * 2); ctx.fill();
   text(String(house.index + 1), x, y + size * 1.08, 11, colors.text, 'center', '700');
   ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(x - size * .62, y + size * .78, size * 1.24, 4); ctx.fillStyle = house.destroyed ? '#879391' : colors.cyan; ctx.fillRect(x - size * .62, y + size * .78, size * 1.24 * house.hp / house.maxHp, 4);
@@ -214,6 +254,8 @@ function drawHouse(house, x, y, selected, scale = 1) {
 
 function drawCharacter(x, y, role, player, scale = 1) {
   const radius = Math.max(8, WIDTH * .028 * scale); ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(x, y + radius * .8, radius * 1.2, radius * .46, 0, 0, Math.PI * 2); ctx.fill();
+  const artKey = role === 'cat' ? 'cat' : 'mouse'; const artSize = radius * 3.15;
+  if (drawAsset(artKey, x - artSize / 2, y - artSize * .82, artSize, artSize, player ? 1 : .88)) { if (player) { ctx.strokeStyle = role === 'cat' ? colors.orange : colors.cyan; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, radius * 1.08, 0, Math.PI * 2); ctx.stroke(); } return; }
   ctx.fillStyle = role === 'cat' ? '#e68545' : '#9bc9bc'; ctx.strokeStyle = player ? '#f4f8df' : 'rgba(255,255,255,.45)'; ctx.lineWidth = player ? 2 : 1; ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   ctx.fillStyle = role === 'cat' ? '#ffb271' : '#d8f4df'; ctx.beginPath(); ctx.arc(x - radius * .52, y - radius * .7, radius * .42, 0, Math.PI * 2); ctx.arc(x + radius * .52, y - radius * .7, radius * .42, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#10252a'; ctx.beginPath(); ctx.arc(x - radius * .3, y - radius * .08, radius * .11, 0, Math.PI * 2); ctx.arc(x + radius * .3, y - radius * .08, radius * .11, 0, Math.PI * 2); ctx.fill();
@@ -223,7 +265,7 @@ function drawPanel() {
   const top = Math.min(HEIGHT - 255, 620);
   roundedRect(14, top, WIDTH - 28, 42, 10, colors.panel, colors.line);
   const cells = [['资源', Math.floor(state.gold)], ['存活鼠', state.miceAlive], ['存活猫', state.catsAlive]];
-  cells.forEach((item, index) => { const x = 14 + (WIDTH - 28) / 3 * index; if (index) line(x, top + 7, x, top + 35); text(item[0], x + (WIDTH - 28) / 6, top + 15, 9, colors.muted, 'center'); text(String(item[1]), x + (WIDTH - 28) / 6, top + 33, 15, colors.text, 'center', '700'); });
+  cells.forEach((item, index) => { const x = 14 + (WIDTH - 28) / 3 * index; if (index) line(x, top + 7, x, top + 35); if (index === 0) drawAsset('coin', x + (WIDTH - 28) / 6 - 28, top + 9, 18, 18, .95); text(item[0], x + (WIDTH - 28) / 6, top + 15, 9, colors.muted, 'center'); text(String(item[1]), x + (WIDTH - 28) / 6, top + 33, 15, colors.text, 'center', '700'); });
   const cardTop = top + 49; roundedRect(14, cardTop, WIDTH - 28, 45, 9, colors.panel, colors.line);
   const currentHouse = state.houses[state.selectedHouse] || state.houses[0]; const hp = state.role === 'mouse' ? currentHouse.hp : state.catHp; const max = state.role === 'mouse' ? currentHouse.maxHp : state.catMaxHp;
   text(state.role === 'mouse' ? `老鼠 · 守卫房子 ${state.selectedHouse + 1}` : `猫 · 目标房子 ${state.selectedHouse + 1}`, 24, cardTop + 18, 11, state.role === 'mouse' ? colors.cyan : colors.orange, 'left', '700');
@@ -277,8 +319,10 @@ function drawLobby() {
 
 function drawResult() {
   drawHeader(); roundedRect(20, 132, WIDTH - 40, 205, 16, colors.panel, colors.line);
-  const mouseWin = state.result.startsWith('老鼠'); text(mouseWin ? '老鼠方获胜' : '猫方获胜', WIDTH / 2, 190, 26, mouseWin ? colors.cyan : colors.orange, 'center', '800');
-  text(state.result, WIDTH / 2, 228, 11, colors.text, 'center'); text(`存活老鼠 ${state.miceAlive} · 存活猫 ${state.catsAlive}`, WIDTH / 2, 268, 12, colors.muted, 'center'); text(`击破大门 ${state.destroyedGates} · 积分 ${Math.floor(state.score)}`, WIDTH / 2, 294, 12, colors.muted, 'center');
+  const mouseWin = state.result.startsWith('老鼠'); const resultArt = mouseWin ? (state.role === 'mouse' ? 'mouseWin' : 'catLose') : (state.role === 'mouse' ? 'mouseLose' : 'catWin');
+  drawAsset(resultArt, WIDTH / 2 - 47, 142, 94, 94, .98);
+  text(mouseWin ? '老鼠方获胜' : '猫方获胜', WIDTH / 2, 246, 26, mouseWin ? colors.cyan : colors.orange, 'center', '800');
+  text(state.result, WIDTH / 2, 278, 11, colors.text, 'center'); text(`存活老鼠 ${state.miceAlive} · 存活猫 ${state.catsAlive}`, WIDTH / 2, 306, 12, colors.muted, 'center'); text(`击破大门 ${state.destroyedGates} · 积分 ${Math.floor(state.score)}`, WIDTH / 2, 328, 12, colors.muted, 'center');
   roundedRect(24, HEIGHT - 120, WIDTH - 48, 50, 10, colors.cyan, colors.line); text('重新匹配', WIDTH / 2, HEIGHT - 88, 14, colors.bg, 'center', '800');
 }
 
@@ -307,9 +351,9 @@ function upgrade(index) {
   else { if (state.gold < item[2]) return; state.gold -= item[2]; }
   state.upgrades[item[3]] = true;
   const house = state.houses[state.selectedHouse];
-  if (item[3] === 'door2') { house.level = 2; house.maxHp = 800; house.hp = Math.max(house.hp, 800); }
-  if (item[3] === 'door3' && house.level >= 2) { house.level = 3; house.maxHp = 1200; house.hp = Math.max(house.hp, 1200); }
-  if (item[3] === 'door4' && house.level >= 3) { house.level = 4; house.maxHp = 1800; house.hp = Math.max(house.hp, 1800); }
+  if (item[3] === 'door2') { house.level = 2; house.armor = 10; house.maxHp = 800; house.hp = Math.max(house.hp, 800); }
+  if (item[3] === 'door3' && house.level >= 2) { house.level = 3; house.armor = 20; house.maxHp = 1200; house.hp = Math.max(house.hp, 1200); }
+  if (item[3] === 'door4' && house.level >= 3) { house.level = 4; house.armor = 30; house.maxHp = 1800; house.hp = Math.max(house.hp, 1800); }
   if (item[3] === 'turret') { state.turrets += 1; house.turrets = (house.turrets || 0) + 1; }
   if (item[3] === 'turret2') { house.turrets = Math.max(1, house.turrets || 0); }
   if (['trap', 'shock', 'heal'].includes(item[3])) { state.devices.push(item[3]); house.devices = house.devices || []; house.devices.push(item[3]); }
@@ -439,4 +483,4 @@ function checkServer() { wx.request({ url: `${API_BASE}/api/health`, timeout: 10
 
 function frame() { const now = Date.now(); const delta = Math.min(.05, (now - state.lastTime) / 1000); state.lastTime = now; update(delta); render(); requestAnimationFrame(frame); }
 
-resetGame(); checkServer(); frame();
+loadAssets(); resetGame(); checkServer(); frame();
