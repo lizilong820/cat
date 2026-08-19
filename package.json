@@ -7,8 +7,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "frontend": "python -m http.server 5173 --directory public",
-    "check": "node --check server.js && node --check public/app.js && node --check game.js"
+    "check": "node --check server.js && node --check game.js"
   },
   "engines": {
     "node": ">=20"
