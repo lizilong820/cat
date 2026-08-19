@@ -54,16 +54,19 @@ const state = {
   gold: 320, miceAlive: 10, catsAlive: 2, catHp: 1000, catMaxHp: 1000,
   selectedHouse: 0, houses: [], turrets: 0, devices: [], upgrades: {}, feed: [], destroyedGates: 0,
   move: { x: 0, y: 0 }, joystick: false, lastTime: Date.now(), lastAttack: 0,
-  serverOnline: false, touchFx: { x: -100, y: -100, life: 0 }, pressed: '',
+  serverOnline: false, touchFx: { x: -100, y: -100, life: 0 }, pressed: '', result: '',
   player: { x: 1000, y: 1000, targetX: 1000, targetY: 1000, path: [] }, camera: { x: 1000, y: 1000 }
 };
 
 function resetGame() {
   state.phase = 'lobby'; state.phaseTime = 10; state.timeLeft = 480; state.eventCooldown = 60; state.activeEvent = null; state.eventLeft = 0;
-  state.gold = 320; state.miceAlive = 10; state.catsAlive = 2; state.catHp = 1000;
+  state.gold = 320; state.miceAlive = 10; state.catsAlive = 2; state.catHp = 1000; state.destroyedGates = 0;
   state.selectedHouse = 0; state.turrets = 0; state.devices = []; state.upgrades = {}; state.destroyedGates = 0;
   state.feed = []; state.touchFx.life = 0; state.pressed = '';
   state.player = { x: 1000, y: 1000, targetX: 1000, targetY: 1000, path: [] }; state.camera = { x: 1000, y: 1000 };
+  state.aiMice = Array.from({ length: 9 }, (_, index) => ({ id: index + 1, difficulty: index < 3 ? '简单' : index < 7 ? '普通' : '困难', state: '空闲', gold: 0, reaction: index < 3 ? 3 : index < 7 ? 1.5 : .5, timer: 0 }));
+  state.aiCats = [{ id: 1, hp: 1000, x: 1050, y: 1000, target: 0 }];
+  state.resourcePoints = Array.from({ length: 12 }, (_, index) => ({ x: 180 + ((index * 317) % 1640), y: 180 + ((index * 541) % 1640), active: true }));
   state.houses = Array.from({ length: 10 }, (_, index) => { const angle = -Math.PI / 2 + index / 10 * Math.PI * 2; return {
     index, hp: 500, maxHp: 500, level: 1, destroyed: false, underAttack: false,
     x: 1000 + Math.cos(angle) * 650, y: 1000 + Math.sin(angle) * 520
@@ -74,7 +77,7 @@ function resetGame() {
 function beginRoleSelect() { state.phase = 'role'; state.phaseTime = 10; addFeed('选角开始：请选择猫或老鼠。'); }
 function confirmRole() { state.phase = state.role === 'mouse' ? 'house' : 'deploy'; state.phaseTime = state.role === 'mouse' ? 10 : 30; state.selectedHouse = state.role === 'mouse' ? -1 : 0; addFeed(state.role === 'mouse' ? '请选择一栋房子。' : '猫位锁定，进入 30 秒部署期。'); }
 function confirmHouse() { if (state.selectedHouse < 0) return; state.phase = 'deploy'; state.phaseTime = 30; state.gold = 300; addFeed(`房子 ${state.selectedHouse + 1} 已分配，进入部署期。`); }
-function beginBattle() { state.phase = 'battle'; state.timeLeft = 480; addFeed('部署完成：攻防对抗开始。'); }
+function beginBattle() { state.phase = 'deploy'; state.phaseTime = 30; state.gold = state.role === 'mouse' ? 300 : 0; addFeed('部署期开始：老鼠部署防御，猫观察地图。'); }
 function startMatch() {
   state.role = Math.random() < 0.5 ? 'mouse' : 'cat';
   state.selectedHouse = state.role === 'mouse' ? Math.floor(Math.random() * 10) : 0;
@@ -163,11 +166,21 @@ function drawMap() {
   [[1000,0,1000,2000],[0,1000,2000,1000],[350,350,1650,1650],[1650,350,350,1650]].forEach((road) => { const a = toScreen(road[0], road[1]); const b = toScreen(road[2], road[3]); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); });
   ctx.strokeStyle = 'rgba(238,204,135,.35)'; ctx.lineWidth = 2; ctx.setLineDash([10, 12]); [[1000,0,1000,2000],[0,1000,2000,1000]].forEach((road) => { const a = toScreen(road[0], road[1]); const b = toScreen(road[2], road[3]); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }); ctx.setLineDash([]);
   for (let i = 0; i < 32; i += 1) { const p = toScreen(100 + ((i * 317) % 1800), 100 + ((i * 541) % 1800)); ctx.fillStyle = '#2c6651'; ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(5, 18 * scale), 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#437a59'; ctx.beginPath(); ctx.arc(p.x - 5 * scale, p.y - 7 * scale, Math.max(3, 12 * scale), 0, Math.PI * 2); ctx.fill(); }
+  if (state.resourcePoints) state.resourcePoints.forEach((point) => { if (!point.active) return; const p = toScreen(point.x, point.y); ctx.fillStyle = colors.orange; ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(3, 7 * scale), 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#ffe09d'; ctx.fillRect(p.x - 2, p.y - 2, 4, 4); });
   const center = toScreen(1000, 1000); const centerRadius = Math.max(30, 90 * scale); ctx.fillStyle = 'rgba(100,222,210,.13)'; ctx.beginPath(); ctx.arc(center.x, center.y, centerRadius, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = colors.cyan; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(center.x, center.y, centerRadius, 0, Math.PI * 2); ctx.stroke(); text('中心事件区', center.x, center.y + 4, 11, colors.text, 'center', '700');
   state.houses.forEach((house) => { const p = toScreen(house.x, house.y); house.screenX = p.x; house.screenY = p.y; drawHouse(house, p.x, p.y, house.index === state.selectedHouse, scale); });
   const player = toScreen(state.player.x, state.player.y); drawCharacter(player.x, player.y, state.role, true, scale); ctx.restore();
   if (state.touchFx.life > 0) { ctx.strokeStyle = `rgba(100,222,210,${state.touchFx.life})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(state.touchFx.x, state.touchFx.y, (1 - state.touchFx.life) * 26 + 8, 0, Math.PI * 2); ctx.stroke(); }
-  text(`小镇地图 2000×2000 · ${Math.round(state.camera.x)},${Math.round(state.camera.y)}`, 26, top + 24, 10, 'rgba(219,243,233,.58)', 'left', '600');
+  drawMinimap();
+  text(`小镇地图 2000×2000 · 9 AI 老鼠 · ${Math.round(state.camera.x)},${Math.round(state.camera.y)}`, 26, top + 24, 10, 'rgba(219,243,233,.58)', 'left', '600');
+}
+
+function drawMinimap() {
+  const x = WIDTH - 100; const y = 118; const size = 76;
+  roundedRect(x, y, size, size, 8, 'rgba(5,17,22,.86)', 'rgba(172,211,217,.35)');
+  ctx.strokeStyle = 'rgba(155,121,83,.8)'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(x + 8, y + size / 2); ctx.lineTo(x + size - 8, y + size / 2); ctx.moveTo(x + size / 2, y + 8); ctx.lineTo(x + size / 2, y + size - 8); ctx.stroke();
+  state.houses.forEach((house) => { ctx.fillStyle = house.destroyed ? '#5d6868' : house.index === state.selectedHouse ? colors.orange : colors.cyan; ctx.fillRect(x + house.x / WORLD.width * size - 2, y + house.y / WORLD.height * size - 2, 4, 4); });
+  ctx.fillStyle = colors.text; ctx.beginPath(); ctx.arc(x + state.player.x / WORLD.width * size, y + state.player.y / WORLD.height * size, 3, 0, Math.PI * 2); ctx.fill();
 }
 
 function drawHouse(house, x, y, selected, scale = 1) {
@@ -236,6 +249,13 @@ function drawLobby() {
   text('开始匹配', WIDTH / 2, HEIGHT - 98, 15, colors.bg, 'center', '800');
 }
 
+function drawResult() {
+  drawHeader(); roundedRect(20, 132, WIDTH - 40, 205, 16, colors.panel, colors.line);
+  const mouseWin = state.result.startsWith('老鼠'); text(mouseWin ? '老鼠方获胜' : '猫方获胜', WIDTH / 2, 190, 26, mouseWin ? colors.cyan : colors.orange, 'center', '800');
+  text(state.result, WIDTH / 2, 228, 11, colors.text, 'center'); text(`存活老鼠 ${state.miceAlive} · 存活猫 ${state.catsAlive}`, WIDTH / 2, 268, 12, colors.muted, 'center'); text(`击破大门 ${state.destroyedGates} · 积分 ${Math.floor(state.score)}`, WIDTH / 2, 294, 12, colors.muted, 'center');
+  roundedRect(24, HEIGHT - 120, WIDTH - 48, 50, 10, colors.cyan, colors.line); text('重新匹配', WIDTH / 2, HEIGHT - 88, 14, colors.bg, 'center', '800');
+}
+
 function drawMatchResult() {
   drawHeader(); text('匹配完成', WIDTH / 2, HEIGHT * .34, 20, colors.text, 'center', '800');
   text(state.role === 'mouse' ? '你被分配为：老鼠' : '你被分配为：猫', WIDTH / 2, HEIGHT * .43, 25, state.role === 'mouse' ? colors.cyan : colors.orange, 'center', '800');
@@ -246,8 +266,11 @@ function render() {
   drawBackground();
   if (state.phase === 'lobby') { drawLobby(); return; }
   if (state.phase === 'match') { drawMatchResult(); return; }
-  drawHeader(); drawMap(); drawPanel();
+  if (state.phase === 'result') { drawResult(); return; }
+  drawHeader(); text(state.phase === 'deploy' ? `部署期 ${Math.ceil(state.phaseTime)}s` : `${formatTime(state.timeLeft)} · ${battleStage()}`, WIDTH - 18, 52, 10, colors.orange, 'right', '700'); drawMap(); drawPanel();
 }
+
+function battleStage() { const elapsed = 480 - state.timeLeft; if (state.phase === 'deploy') return '部署期'; if (elapsed < 90) return '试探期'; if (elapsed < 240) return '拉锯期'; if (elapsed < 360) return '决战期'; return '收尾期'; }
 
 function setRole(role) { if (state.role === role) return; state.role = role; state.selectedHouse = role === 'mouse' ? 0 : 4; addFeed(role === 'mouse' ? '已切换到老鼠阵营。' : '已切换到猫阵营。'); }
 
@@ -268,10 +291,9 @@ function upgrade(index) {
 
 function attack() {
   if (state.role !== 'cat' || Date.now() - state.lastAttack < 520) return; state.lastAttack = Date.now(); const house = state.houses[state.selectedHouse]; if (!house || house.destroyed) return;
-  let damage = state.upgrades.weapon4 ? 180 : state.upgrades.weapon3 ? 120 : state.upgrades.weapon2 ? 80 : 50;
-  if (state.upgrades.critical) { damage *= 3; delete state.upgrades.critical; }
-  house.hp = Math.max(0, house.hp - damage); house.underAttack = true; state.gold += 12; if (state.upgrades.lifesteal) state.catHp = Math.min(state.catMaxHp, state.catHp + damage * .05); addFeed(`攻击房子 ${house.index + 1}，房门 -${damage} HP。`);
-  if (house.hp === 0) { house.destroyed = true; state.miceAlive = Math.max(0, state.miceAlive - 1); state.destroyedGates = (state.destroyedGates || 0) + 1; state.gold += 300 + state.destroyedGates * 100; addFeed(`房子 ${house.index + 1} 被攻破。`); }
+  house.underAttack = true;
+  if (Math.hypot(state.player.x - house.x, state.player.y - house.y) > 150) navigateTo(house.x, house.y);
+  addFeed(`猫锁定房子 ${house.index + 1}，进入攻击范围后自动攻击。`);
 }
 
 function triggerEvent() {
@@ -279,17 +301,60 @@ function triggerEvent() {
   if (event.name === '资源雨') state.gold += 200; if (event.name === '猫薄荷') state.catHp = Math.min(state.catMaxHp, state.catHp + 300); if (event.name === '地震') state.houses.forEach((house) => { house.hp = Math.max(0, house.hp - 100); }); addFeed(`中心事件：${event.name}。`);
 }
 
+function updateAiMice(delta) {
+  state.aiMice.forEach((ai) => {
+    ai.timer -= delta;
+    if (ai.timer > 0) return;
+    ai.timer = ai.reaction;
+    if (ai.state === '空闲') ai.state = ai.gold >= 200 ? '升级' : '采集';
+    else if (ai.state === '采集') { ai.gold += (ai.difficulty === '困难' ? 12 : ai.difficulty === '简单' ? 7 : 10) * ai.reaction; if (ai.gold >= 200) ai.state = '升级'; }
+    else if (ai.state === '升级') { ai.gold -= 200; ai.state = '防守'; }
+    else if (ai.state === '防守') { const threatened = state.houses.some((house) => house.underAttack); if (threatened) ai.state = '撤退'; }
+    else if (ai.state === '撤退') { const house = state.houses[ai.id % state.houses.length]; if (house.hp < house.maxHp) house.hp = Math.min(house.maxHp, house.hp + 15 * ai.reaction); if (house.hp > house.maxHp * .3) ai.state = '空闲'; }
+  });
+}
+
+function applyCombat(delta) {
+  const house = state.houses[state.selectedHouse];
+  if (!house || house.destroyed) return;
+  // 文档公式：实际伤害 = 攻击力 * (1 - min(护甲/(护甲+100), .5))。
+  const armorRate = Math.min(house.armor / (house.armor + 100), .5);
+  if (state.role === 'mouse' && state.turrets > 0 && house.underAttack) {
+    const turretDps = state.upgrades.turret2 ? 50 : 30;
+    state.catHp = Math.max(0, state.catHp - turretDps * state.turrets * delta);
+  }
+  if (state.role === 'cat' && state.player.path.length === 0 && Math.hypot(state.player.x - house.x, state.player.y - house.y) < 150) {
+    let attackDps = state.upgrades.weapon4 ? 180 : state.upgrades.weapon3 ? 120 : state.upgrades.weapon2 ? 80 : 50;
+    if (state.upgrades.critical) { attackDps *= 3; delete state.upgrades.critical; }
+    house.hp = Math.max(0, house.hp - attackDps * (1 - armorRate) * delta);
+    house.underAttack = true;
+    if (state.upgrades.lifesteal) state.catHp = Math.min(state.catMaxHp, state.catHp + attackDps * .05 * delta);
+    if (house.hp <= 0 && !house.destroyed) { house.destroyed = true; state.destroyedGates += 1; state.miceAlive = Math.max(0, state.miceAlive - 1); state.gold += 300 + 100 * state.destroyedGates; state.score += 15; addFeed(`房子 ${house.index + 1} 被攻破，老鼠淘汰。`); }
+  }
+}
+
 function update(delta) {
   state.touchFx.life = Math.max(0, state.touchFx.life - delta * 1.8);
   if (state.phase === 'match') { state.phaseTime -= delta; if (state.phaseTime <= 0) beginBattle(); return; }
+  if (state.phase === 'deploy') { state.phaseTime = Math.max(0, state.phaseTime - delta); updateMovement(delta); if (state.phaseTime === 0) { state.phase = 'battle'; addFeed('部署完成：攻防对抗开始。'); } return; }
   if (state.phase !== 'battle' || state.timeLeft <= 0) return;
   state.timeLeft = Math.max(0, state.timeLeft - delta); state.eventCooldown = Math.max(0, state.eventCooldown - delta); state.eventLeft = Math.max(0, state.eventLeft - delta);
   state.gold += delta * (state.role === 'mouse' ? (state.upgrades.room3 ? 22 : state.upgrades.room2 ? 15 : 10) : 3);
+  updateMovement(delta); updateAiMice(delta); applyCombat(delta);
+  if (state.resourcePoints) state.resourcePoints.forEach((point) => { if (point.active && Math.hypot(point.x - state.player.x, point.y - state.player.y) < 42) { point.active = false; state.gold += 50; addFeed('拾取地图资源点：+50 金。'); } });
+  if (state.eventCooldown <= 0 && Math.hypot(state.player.x - 1000, state.player.y - 1000) < 140) triggerEvent();
+  if (state.catsAlive <= 0 || state.catHp <= 0) finish('老鼠方获胜：全部猫 HP 归零。');
+  else if (state.destroyedGates >= 10) finish('猫方获胜：全部 10 个大门被攻破。');
+  else if (state.timeLeft <= 0) finish(state.miceAlive > 0 ? '老鼠方获胜：8 分钟时仍有老鼠存活。' : '猫方获胜：8 分钟时没有老鼠存活。');
+}
+
+function finish(result) { if (state.phase === 'result') return; state.phase = 'result'; state.result = result; addFeed(result); }
+
+function updateMovement(delta) {
   const dx = state.player.targetX - state.player.x; const dy = state.player.targetY - state.player.y; const distance = Math.hypot(dx, dy);
   if (distance > 3) { const speed = state.role === 'cat' ? 140 : 100; const step = Math.min(distance, speed * delta); state.player.x += dx / distance * step; state.player.y += dy / distance * step; }
   else if (state.player.path.length) { state.player.path.shift(); const next = state.player.path[0]; if (next) { state.player.targetX = next.x; state.player.targetY = next.y; } }
   state.camera.x += (state.player.x - state.camera.x) * Math.min(1, delta * 7); state.camera.y += (state.player.y - state.camera.y) * Math.min(1, delta * 7);
-  if (state.role === 'mouse' && state.turrets > 0) { const house = state.houses[state.selectedHouse]; if (house.underAttack) state.catHp = Math.max(0, state.catHp - delta * state.turrets * (state.upgrades.turret2 ? 50 : 30)); }
 }
 
 function hit(x, y, left, top, right, bottom) { return x >= left && x <= right && y >= top && y <= bottom; }
@@ -298,7 +363,8 @@ function touchStart(touch) {
   const x = touch.clientX || touch.x; const y = touch.clientY || touch.y;
   state.touchFx = { x, y, life: 1 };
   if (state.phase === 'lobby') { if (y > HEIGHT - 170) { state.pressed = 'match'; startMatch(); } return; }
-  if (state.phase !== 'battle') return;
+  if (state.phase === 'result') { if (y > HEIGHT - 150) resetGame(); return; }
+  if (state.phase !== 'battle' && state.phase !== 'deploy') return;
   if (y > HEIGHT - 120 && x > WIDTH - 95) { state.pressed = 'event'; triggerEvent(); return; }
   if (state.role === 'cat' && y > HEIGHT - 120 && x > WIDTH - 175 && x < WIDTH - 85) { state.pressed = 'attack'; attack(); return; }
   const mapTop = 108; const mapBottom = Math.min(HEIGHT - 265, 610);
