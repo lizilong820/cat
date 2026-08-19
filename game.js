@@ -54,7 +54,7 @@ const state = {
   gold: 320, miceAlive: 10, catsAlive: 2, catHp: 1000, catMaxHp: 1000,
   selectedHouse: 0, houses: [], turrets: 0, devices: [], upgrades: {}, feed: [], destroyedGates: 0,
   move: { x: 0, y: 0 }, joystick: false, lastTime: Date.now(), lastAttack: 0,
-  serverOnline: false, touchFx: { x: -100, y: -100, life: 0 }, pressed: '', result: '',
+  serverOnline: false, roomId: '', touchFx: { x: -100, y: -100, life: 0 }, pressed: '', result: '',
   player: { x: 1000, y: 1000, targetX: 1000, targetY: 1000, path: [] }, camera: { x: 1000, y: 1000 }
 };
 
@@ -69,7 +69,7 @@ function resetGame() {
   state.resourcePoints = Array.from({ length: 12 }, (_, index) => ({ x: 180 + ((index * 317) % 1640), y: 180 + ((index * 541) % 1640), active: true }));
   state.houses = Array.from({ length: 10 }, (_, index) => { const angle = -Math.PI / 2 + index / 10 * Math.PI * 2; return {
     index, hp: 500, maxHp: 500, level: 1, destroyed: false, underAttack: false,
-    x: 1000 + Math.cos(angle) * 650, y: 1000 + Math.sin(angle) * 520
+    x: 1000 + Math.cos(angle) * 650, y: 1000 + Math.sin(angle) * 520, turrets: 0, devices: []
   }; });
   addFeed('新对局开始：选择阵营，守住或击破房门。');
 }
@@ -88,6 +88,7 @@ function startMatch() {
   state.player.path = [];
   state.camera.x = state.player.x; state.camera.y = state.player.y;
   addFeed(`匹配完成：随机分配为${state.role === 'mouse' ? '老鼠' : '猫'}。`);
+  wx.request({ url: `${API_BASE}/api/rooms`, method: 'POST', timeout: 10000, success: (response) => { state.roomId = response.data?.id || ''; addFeed(`房间 ${state.roomId || 'prototype'} 已创建。`); }, fail: () => addFeed('远端匹配暂不可用，继续本地原型对局。') });
 }
 
 function navigateTo(targetX, targetY) {
@@ -169,6 +170,8 @@ function drawMap() {
   if (state.resourcePoints) state.resourcePoints.forEach((point) => { if (!point.active) return; const p = toScreen(point.x, point.y); ctx.fillStyle = colors.orange; ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(3, 7 * scale), 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#ffe09d'; ctx.fillRect(p.x - 2, p.y - 2, 4, 4); });
   const center = toScreen(1000, 1000); const centerRadius = Math.max(30, 90 * scale); ctx.fillStyle = 'rgba(100,222,210,.13)'; ctx.beginPath(); ctx.arc(center.x, center.y, centerRadius, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = colors.cyan; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(center.x, center.y, centerRadius, 0, Math.PI * 2); ctx.stroke(); text('中心事件区', center.x, center.y + 4, 11, colors.text, 'center', '700');
   state.houses.forEach((house) => { const p = toScreen(house.x, house.y); house.screenX = p.x; house.screenY = p.y; drawHouse(house, p.x, p.y, house.index === state.selectedHouse, scale); });
+  if (state.aiMice) state.aiMice.forEach((ai, index) => { const house = state.houses[(index + 1) % state.houses.length]; const p = toScreen(house.x + 42, house.y + 34); drawCharacter(p.x, p.y, 'mouse', false, scale * .75); });
+  if (state.aiCats) state.aiCats.forEach((cat) => { const p = toScreen(cat.x, cat.y); drawCharacter(p.x, p.y, 'cat', false, scale * .85); });
   const player = toScreen(state.player.x, state.player.y); drawCharacter(player.x, player.y, state.role, true, scale); ctx.restore();
   if (state.touchFx.life > 0) { ctx.strokeStyle = `rgba(100,222,210,${state.touchFx.life})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(state.touchFx.x, state.touchFx.y, (1 - state.touchFx.life) * 26 + 8, 0, Math.PI * 2); ctx.stroke(); }
   drawMinimap();
@@ -191,6 +194,12 @@ function drawHouse(house, x, y, selected, scale = 1) {
   ctx.fillStyle = house.destroyed ? '#596362' : house.level >= 3 ? '#9c6a3b' : '#7a5a3c'; ctx.beginPath(); ctx.moveTo(x - size * .72, y - size * .35); ctx.lineTo(x, y - size * .78); ctx.lineTo(x + size * .72, y - size * .35); ctx.closePath(); ctx.fill();
   ctx.fillStyle = '#163238'; ctx.fillRect(x - size * .12, y + size * .04, size * .24, size * .35);
   ctx.fillStyle = house.destroyed ? '#899694' : '#ffe09d'; ctx.fillRect(x - size * .4, y - size * .05, size * .2, size * .16); ctx.fillRect(x + size * .2, y - size * .05, size * .2, size * .16);
+  // 房屋内部四个功能区的缩略表达：大门、前院炮台槽、内庭设备槽、资源室。
+  ctx.fillStyle = house.destroyed ? '#687474' : '#a8d6cc'; ctx.fillRect(x - size * .12, y + size * .04, size * .24, size * .35);
+  ctx.fillStyle = '#6fd7c9'; ctx.beginPath(); ctx.arc(x - size * .42, y + size * .45, Math.max(2, size * .07), 0, Math.PI * 2); ctx.arc(x + size * .42, y + size * .45, Math.max(2, size * .07), 0, Math.PI * 2); ctx.fill();
+  if (house.turrets > 0) { ctx.fillStyle = colors.orange; ctx.fillRect(x - size * .48, y + size * .22, size * .16, size * .08); }
+  if (house.devices?.length) { ctx.fillStyle = colors.blue; ctx.fillRect(x + size * .32, y + size * .2, size * .12, size * .08); }
+  ctx.fillStyle = colors.orange; ctx.beginPath(); ctx.arc(x + size * .42, y - size * .28, Math.max(2, size * .06), 0, Math.PI * 2); ctx.fill();
   text(String(house.index + 1), x, y + size * 1.08, 11, colors.text, 'center', '700');
   ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(x - size * .62, y + size * .78, size * 1.24, 4); ctx.fillStyle = house.destroyed ? '#879391' : colors.cyan; ctx.fillRect(x - size * .62, y + size * .78, size * 1.24 * house.hp / house.maxHp, 4);
 }
@@ -208,12 +217,19 @@ function drawPanel() {
   const cells = [['资源', Math.floor(state.gold)], ['存活鼠', state.miceAlive], ['存活猫', state.catsAlive]];
   cells.forEach((item, index) => { const x = 14 + (WIDTH - 28) / 3 * index; if (index) line(x, top + 7, x, top + 35); text(item[0], x + (WIDTH - 28) / 6, top + 15, 9, colors.muted, 'center'); text(String(item[1]), x + (WIDTH - 28) / 6, top + 33, 15, colors.text, 'center', '700'); });
   const cardTop = top + 49; roundedRect(14, cardTop, WIDTH - 28, 45, 9, colors.panel, colors.line);
-  const hp = state.role === 'mouse' ? state.houses[state.selectedHouse].hp : state.catHp; const max = state.role === 'mouse' ? state.houses[state.selectedHouse].maxHp : state.catMaxHp;
+  const currentHouse = state.houses[state.selectedHouse] || state.houses[0]; const hp = state.role === 'mouse' ? currentHouse.hp : state.catHp; const max = state.role === 'mouse' ? currentHouse.maxHp : state.catMaxHp;
   text(state.role === 'mouse' ? `老鼠 · 守卫房子 ${state.selectedHouse + 1}` : `猫 · 目标房子 ${state.selectedHouse + 1}`, 24, cardTop + 18, 11, state.role === 'mouse' ? colors.cyan : colors.orange, 'left', '700');
   roundedRect(24, cardTop + 27, WIDTH - 110, 7, 4, '#07141a'); roundedRect(24, cardTop + 27, (WIDTH - 110) * hp / max, 7, 4, state.role === 'mouse' ? colors.green : colors.red); text(`${Math.round(hp / max * 100)}%`, WIDTH - 24, cardTop + 35, 9, colors.muted, 'right');
   const quick = quickUpgradeIndices(); const y = cardTop + 52; const gap = 6; const w = (WIDTH - 28 - gap * 2) / 3;
   quick.forEach((index, slot) => { const item = (state.role === 'mouse' ? mouseUpgrades : catUpgrades)[index]; const owned = !!state.upgrades[item[3]]; roundedRect(14 + slot * (w + gap), y, w, 42, 7, owned ? '#263a3d' : colors.panel2, owned ? colors.line : 'rgba(100,222,210,.28)'); text(item[0].replace('事件卡 · ', ''), 14 + slot * (w + gap) + w / 2, y + 17, 9, owned ? colors.muted : colors.text, 'center', '700'); text(owned ? '已拥有' : (state.role === 'mouse' ? `${item[2]}金` : (index < 3 ? `需${item[2]}门` : `${item[2]}分`)), 14 + slot * (w + gap) + w / 2, y + 32, 8, owned ? colors.muted : colors.cyan, 'center'); });
-  drawControls();
+  drawEventSummary(cardTop + 101); drawControls();
+}
+
+function drawEventSummary(top) {
+  roundedRect(14, top, WIDTH - 28, 34, 8, colors.panel2, colors.line);
+  text(state.activeEvent ? `事件：${state.activeEvent.name}` : '中心事件：每 60 秒刷新', 23, top + 14, 9, state.activeEvent?.color || colors.orange, 'left', '700');
+  text(state.activeEvent ? state.activeEvent.description : `距刷新 ${Math.ceil(state.eventCooldown)}s`, WIDTH - 23, top + 14, 8, colors.muted, 'right');
+  text(state.role === 'mouse' ? `部署：${state.turrets} 炮台 · ${(state.devices || []).join(' / ') || '无设备'}` : `武器：${state.upgrades.weapon4 ? 'Lv.4' : state.upgrades.weapon3 ? 'Lv.3' : state.upgrades.weapon2 ? 'Lv.2' : 'Lv.1'} · 击破 ${state.destroyedGates} 门`, 23, top + 27, 8, colors.muted);
 }
 
 function quickUpgradeIndices() {
@@ -284,8 +300,9 @@ function upgrade(index) {
   if (item[3] === 'door2') { house.level = 2; house.maxHp = 800; house.hp = Math.max(house.hp, 800); }
   if (item[3] === 'door3' && house.level >= 2) { house.level = 3; house.maxHp = 1200; house.hp = Math.max(house.hp, 1200); }
   if (item[3] === 'door4' && house.level >= 3) { house.level = 4; house.maxHp = 1800; house.hp = Math.max(house.hp, 1800); }
-  if (item[3] === 'turret') state.turrets += 1;
-  if (['trap', 'shock', 'heal'].includes(item[3])) state.devices.push(item[3]);
+  if (item[3] === 'turret') { state.turrets += 1; house.turrets = (house.turrets || 0) + 1; }
+  if (item[3] === 'turret2') { house.turrets = Math.max(1, house.turrets || 0); }
+  if (['trap', 'shock', 'heal'].includes(item[3])) { state.devices.push(item[3]); house.devices = house.devices || []; house.devices.push(item[3]); }
   addFeed(`${item[0]}已完成。`);
 }
 
@@ -308,9 +325,20 @@ function updateAiMice(delta) {
     ai.timer = ai.reaction;
     if (ai.state === '空闲') ai.state = ai.gold >= 200 ? '升级' : '采集';
     else if (ai.state === '采集') { ai.gold += (ai.difficulty === '困难' ? 12 : ai.difficulty === '简单' ? 7 : 10) * ai.reaction; if (ai.gold >= 200) ai.state = '升级'; }
-    else if (ai.state === '升级') { ai.gold -= 200; ai.state = '防守'; }
+    else if (ai.state === '升级') { ai.gold -= 200; const house = state.houses[ai.id % state.houses.length]; house.turrets = Math.max(1, house.turrets); ai.state = '防守'; }
     else if (ai.state === '防守') { const threatened = state.houses.some((house) => house.underAttack); if (threatened) ai.state = '撤退'; }
     else if (ai.state === '撤退') { const house = state.houses[ai.id % state.houses.length]; if (house.hp < house.maxHp) house.hp = Math.min(house.maxHp, house.hp + 15 * ai.reaction); if (house.hp > house.maxHp * .3) ai.state = '空闲'; }
+  });
+}
+
+function updateAiCats(delta) {
+  if (!state.aiCats) return;
+  state.aiCats.forEach((cat) => {
+    const target = state.houses.find((house) => !house.destroyed && house.underAttack) || state.houses.find((house) => !house.destroyed);
+    if (!target) return;
+    cat.target = target.index;
+    const dx = target.x - cat.x; const dy = target.y - cat.y; const distance = Math.hypot(dx, dy); const step = Math.min(distance, 115 * delta);
+    if (distance > 130) { cat.x += dx / distance * step; cat.y += dy / distance * step; }
   });
 }
 
@@ -323,6 +351,7 @@ function applyCombat(delta) {
     const turretDps = state.upgrades.turret2 ? 50 : 30;
     state.catHp = Math.max(0, state.catHp - turretDps * state.turrets * delta);
   }
+  if (state.role === 'cat' && house.devices?.includes('shock') && Math.hypot(state.player.x - house.x, state.player.y - house.y) < 180) state.catHp = Math.max(0, state.catHp - 20 * delta);
   if (state.role === 'cat' && state.player.path.length === 0 && Math.hypot(state.player.x - house.x, state.player.y - house.y) < 150) {
     let attackDps = state.upgrades.weapon4 ? 180 : state.upgrades.weapon3 ? 120 : state.upgrades.weapon2 ? 80 : 50;
     if (state.upgrades.critical) { attackDps *= 3; delete state.upgrades.critical; }
@@ -340,7 +369,7 @@ function update(delta) {
   if (state.phase !== 'battle' || state.timeLeft <= 0) return;
   state.timeLeft = Math.max(0, state.timeLeft - delta); state.eventCooldown = Math.max(0, state.eventCooldown - delta); state.eventLeft = Math.max(0, state.eventLeft - delta);
   state.gold += delta * (state.role === 'mouse' ? (state.upgrades.room3 ? 22 : state.upgrades.room2 ? 15 : 10) : 3);
-  updateMovement(delta); updateAiMice(delta); applyCombat(delta);
+  updateMovement(delta); updateAiMice(delta); updateAiCats(delta); applyCombat(delta);
   if (state.resourcePoints) state.resourcePoints.forEach((point) => { if (point.active && Math.hypot(point.x - state.player.x, point.y - state.player.y) < 42) { point.active = false; state.gold += 50; addFeed('拾取地图资源点：+50 金。'); } });
   if (state.eventCooldown <= 0 && Math.hypot(state.player.x - 1000, state.player.y - 1000) < 140) triggerEvent();
   if (state.catsAlive <= 0 || state.catHp <= 0) finish('老鼠方获胜：全部猫 HP 归零。');
@@ -352,7 +381,8 @@ function finish(result) { if (state.phase === 'result') return; state.phase = 'r
 
 function updateMovement(delta) {
   const dx = state.player.targetX - state.player.x; const dy = state.player.targetY - state.player.y; const distance = Math.hypot(dx, dy);
-  if (distance > 3) { const speed = state.role === 'cat' ? 140 : 100; const step = Math.min(distance, speed * delta); state.player.x += dx / distance * step; state.player.y += dy / distance * step; }
+  const selected = state.houses[state.selectedHouse]; const trapped = state.role === 'cat' && selected?.devices?.includes('trap') && Math.hypot(state.player.x - selected.x, state.player.y - selected.y) < 180;
+  if (distance > 3) { const speed = state.role === 'cat' ? (trapped ? 70 : 140) : 100; const step = Math.min(distance, speed * delta); state.player.x += dx / distance * step; state.player.y += dy / distance * step; }
   else if (state.player.path.length) { state.player.path.shift(); const next = state.player.path[0]; if (next) { state.player.targetX = next.x; state.player.targetY = next.y; } }
   state.camera.x += (state.player.x - state.camera.x) * Math.min(1, delta * 7); state.camera.y += (state.player.y - state.camera.y) * Math.min(1, delta * 7);
 }
