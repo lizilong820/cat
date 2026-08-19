@@ -54,7 +54,7 @@ const state = {
   gold: 320, miceAlive: 10, catsAlive: 2, catHp: 1000, catMaxHp: 1000,
   selectedHouse: 0, houses: [], turrets: 0, devices: [], upgrades: {}, feed: [], destroyedGates: 0,
   move: { x: 0, y: 0 }, joystick: false, lastTime: Date.now(), lastAttack: 0,
-  serverOnline: false, roomId: '', touchFx: { x: -100, y: -100, life: 0 }, pressed: '', result: '',
+  serverOnline: false, roomId: '', syncElapsed: 0, cardCooldown: 0, buffs: {}, touchFx: { x: -100, y: -100, life: 0 }, pressed: '', result: '',
   player: { x: 1000, y: 1000, targetX: 1000, targetY: 1000, path: [] }, camera: { x: 1000, y: 1000 }
 };
 
@@ -62,7 +62,7 @@ function resetGame() {
   state.phase = 'lobby'; state.phaseTime = 10; state.timeLeft = 480; state.eventCooldown = 60; state.activeEvent = null; state.eventLeft = 0;
   state.gold = 320; state.miceAlive = 10; state.catsAlive = 2; state.catHp = 1000; state.destroyedGates = 0;
   state.selectedHouse = 0; state.turrets = 0; state.devices = []; state.upgrades = {}; state.destroyedGates = 0;
-  state.feed = []; state.touchFx.life = 0; state.pressed = '';
+  state.feed = []; state.syncElapsed = 0; state.cardCooldown = 0; state.buffs = {}; state.touchFx.life = 0; state.pressed = '';
   state.player = { x: 1000, y: 1000, targetX: 1000, targetY: 1000, path: [] }; state.camera = { x: 1000, y: 1000 };
   state.aiMice = Array.from({ length: 9 }, (_, index) => ({ id: index + 1, difficulty: index < 3 ? '简单' : index < 7 ? '普通' : '困难', state: '空闲', gold: 0, reaction: index < 3 ? 3 : index < 7 ? 1.5 : .5, timer: 0 }));
   state.aiCats = [{ id: 1, hp: 1000, x: 1050, y: 1000, target: 0 }];
@@ -88,7 +88,15 @@ function startMatch() {
   state.player.path = [];
   state.camera.x = state.player.x; state.camera.y = state.player.y;
   addFeed(`匹配完成：随机分配为${state.role === 'mouse' ? '老鼠' : '猫'}。`);
-  wx.request({ url: `${API_BASE}/api/rooms`, method: 'POST', timeout: 10000, success: (response) => { state.roomId = response.data?.id || ''; addFeed(`房间 ${state.roomId || 'prototype'} 已创建。`); }, fail: () => addFeed('远端匹配暂不可用，继续本地原型对局。') });
+  wx.request({ url: `${API_BASE}/api/rooms`, method: 'POST', timeout: 10000, success: (response) => { state.roomId = response.data?.id || ''; addFeed(`房间 ${state.roomId || 'prototype'} 已创建。`); syncRoom(); }, fail: () => addFeed('远端匹配暂不可用，继续本地原型对局。') });
+}
+
+function syncRoom() {
+  if (!state.roomId) return;
+  wx.request({ url: `${API_BASE}/api/rooms/${state.roomId}/state`, method: 'POST', data: {
+    phase: state.phase, role: state.role, timeLeft: state.timeLeft, miceAlive: state.miceAlive,
+    catsAlive: state.catsAlive, destroyedGates: state.destroyedGates
+  }, timeout: 10000, fail: () => { /* 网络波动不影响本地表现层 */ } });
 }
 
 function navigateTo(targetX, targetY) {
@@ -229,7 +237,9 @@ function drawEventSummary(top) {
   roundedRect(14, top, WIDTH - 28, 34, 8, colors.panel2, colors.line);
   text(state.activeEvent ? `事件：${state.activeEvent.name}` : '中心事件：每 60 秒刷新', 23, top + 14, 9, state.activeEvent?.color || colors.orange, 'left', '700');
   text(state.activeEvent ? state.activeEvent.description : `距刷新 ${Math.ceil(state.eventCooldown)}s`, WIDTH - 23, top + 14, 8, colors.muted, 'right');
+  const aiSummary = state.aiMice ? `AI：${state.aiMice.filter((ai) => ai.state === '防守').length} 防守 / ${state.aiMice.filter((ai) => ai.state === '采集').length} 采集` : '';
   text(state.role === 'mouse' ? `部署：${state.turrets} 炮台 · ${(state.devices || []).join(' / ') || '无设备'}` : `武器：${state.upgrades.weapon4 ? 'Lv.4' : state.upgrades.weapon3 ? 'Lv.3' : state.upgrades.weapon2 ? 'Lv.2' : 'Lv.1'} · 击破 ${state.destroyedGates} 门`, 23, top + 27, 8, colors.muted);
+  text(aiSummary, WIDTH - 23, top + 27, 8, colors.muted, 'right');
 }
 
 function quickUpgradeIndices() {
@@ -251,7 +261,7 @@ function drawUpgrades(top) {
 function drawControls() {
   const y = HEIGHT - 73; text('点击小镇任意位置自动寻路', 18, y + 5, 10, colors.muted);
   if (state.role === 'cat') { roundedRect(WIDTH - 158, y - 23, 68, 46, 10, state.pressed === 'attack' ? '#704525' : '#3a291b', 'rgba(255,180,91,.5)'); text('攻击', WIDTH - 124, y + 5, 11, '#ffe0ae', 'center', '700'); }
-  roundedRect(WIDTH - 80, y - 23, 66, 46, 10, state.pressed === 'event' ? '#21645f' : '#153b3d', 'rgba(100,222,210,.35)'); text('事件', WIDTH - 47, y + 5, 10, colors.cyan, 'center', '700');
+  roundedRect(WIDTH - 80, y - 23, 66, 46, 10, state.pressed === 'event' ? '#21645f' : '#153b3d', 'rgba(100,222,210,.35)'); text(state.role === 'cat' ? '技能' : '事件', WIDTH - 47, y + 5, 10, colors.cyan, 'center', '700');
 }
 
 function drawLobby() {
@@ -314,6 +324,10 @@ function attack() {
 }
 
 function triggerEvent() {
+  if (state.role === 'cat' && state.phase === 'battle' && state.cardCooldown <= 0) {
+    const card = ['dash', 'shield', 'critical'].find((id) => state.upgrades[id]);
+    if (card) { state.buffs[card] = card === 'critical' ? 1 : 5; state.cardCooldown = 8; addFeed(`猫事件卡：${card === 'dash' ? '疾风突进' : card === 'shield' ? '铁壁护盾' : '致命一击'}。`); return; }
+  }
   if (state.eventCooldown > 0) return; const event = events[Math.floor(Math.random() * events.length)]; state.activeEvent = event; state.eventCooldown = 60; state.eventLeft = event.duration;
   if (event.name === '资源雨') state.gold += 200; if (event.name === '猫薄荷') state.catHp = Math.min(state.catMaxHp, state.catHp + 300); if (event.name === '地震') state.houses.forEach((house) => { house.hp = Math.max(0, house.hp - 100); }); addFeed(`中心事件：${event.name}。`);
 }
@@ -351,10 +365,10 @@ function applyCombat(delta) {
     const turretDps = state.upgrades.turret2 ? 50 : 30;
     state.catHp = Math.max(0, state.catHp - turretDps * state.turrets * delta);
   }
-  if (state.role === 'cat' && house.devices?.includes('shock') && Math.hypot(state.player.x - house.x, state.player.y - house.y) < 180) state.catHp = Math.max(0, state.catHp - 20 * delta);
+  if (state.role === 'cat' && !state.buffs.shield && house.devices?.includes('shock') && Math.hypot(state.player.x - house.x, state.player.y - house.y) < 180) state.catHp = Math.max(0, state.catHp - 20 * delta);
   if (state.role === 'cat' && state.player.path.length === 0 && Math.hypot(state.player.x - house.x, state.player.y - house.y) < 150) {
     let attackDps = state.upgrades.weapon4 ? 180 : state.upgrades.weapon3 ? 120 : state.upgrades.weapon2 ? 80 : 50;
-    if (state.upgrades.critical) { attackDps *= 3; delete state.upgrades.critical; }
+    if (state.buffs.critical) { attackDps *= 3; delete state.buffs.critical; }
     house.hp = Math.max(0, house.hp - attackDps * (1 - armorRate) * delta);
     house.underAttack = true;
     if (state.upgrades.lifesteal) state.catHp = Math.min(state.catMaxHp, state.catHp + attackDps * .05 * delta);
@@ -363,7 +377,10 @@ function applyCombat(delta) {
 }
 
 function update(delta) {
-  state.touchFx.life = Math.max(0, state.touchFx.life - delta * 1.8);
+  state.touchFx.life = Math.max(0, state.touchFx.life - delta * 1.8); state.cardCooldown = Math.max(0, state.cardCooldown - delta);
+  Object.keys(state.buffs).forEach((key) => { if (key !== 'critical') state.buffs[key] = Math.max(0, state.buffs[key] - delta); });
+  state.syncElapsed += delta;
+  if (state.syncElapsed >= 5) { state.syncElapsed = 0; syncRoom(); }
   if (state.phase === 'match') { state.phaseTime -= delta; if (state.phaseTime <= 0) beginBattle(); return; }
   if (state.phase === 'deploy') { state.phaseTime = Math.max(0, state.phaseTime - delta); updateMovement(delta); if (state.phaseTime === 0) { state.phase = 'battle'; addFeed('部署完成：攻防对抗开始。'); } return; }
   if (state.phase !== 'battle' || state.timeLeft <= 0) return;
@@ -382,7 +399,7 @@ function finish(result) { if (state.phase === 'result') return; state.phase = 'r
 function updateMovement(delta) {
   const dx = state.player.targetX - state.player.x; const dy = state.player.targetY - state.player.y; const distance = Math.hypot(dx, dy);
   const selected = state.houses[state.selectedHouse]; const trapped = state.role === 'cat' && selected?.devices?.includes('trap') && Math.hypot(state.player.x - selected.x, state.player.y - selected.y) < 180;
-  if (distance > 3) { const speed = state.role === 'cat' ? (trapped ? 70 : 140) : 100; const step = Math.min(distance, speed * delta); state.player.x += dx / distance * step; state.player.y += dy / distance * step; }
+  if (distance > 3) { const speed = state.role === 'cat' ? (trapped ? 70 : state.buffs.dash > 0 ? 252 : 140) : 100; const step = Math.min(distance, speed * delta); state.player.x += dx / distance * step; state.player.y += dy / distance * step; }
   else if (state.player.path.length) { state.player.path.shift(); const next = state.player.path[0]; if (next) { state.player.targetX = next.x; state.player.targetY = next.y; } }
   state.camera.x += (state.player.x - state.camera.x) * Math.min(1, delta * 7); state.camera.y += (state.player.y - state.camera.y) * Math.min(1, delta * 7);
 }
